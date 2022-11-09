@@ -11,7 +11,11 @@ import com.amazonaws.auth.AWSStaticCredentialsProvider;
 import com.amazonaws.auth.profile.ProfileCredentialsProvider;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
+import com.amazonaws.services.s3.model.GetObjectRequest;
+import com.amazonaws.services.s3.model.ListObjectsRequest;
+import com.amazonaws.services.s3.model.ObjectListing;
 import com.amazonaws.services.s3.model.PutObjectRequest;
+import com.amazonaws.services.s3.model.S3ObjectSummary;
 
 //import javax.swing.event.*;
 import java.awt.*;
@@ -26,8 +30,9 @@ public class DragDropFiles extends JFrame {
     private static String bucketName;
     private static String fileObjKeyName;
     private static String filePath;
-    private DefaultListModel model = new DefaultListModel();
-    private int count = 0;
+    private static AmazonS3 s3;
+    private String downloadName;
+    private int counter = 0;
     private JTree tree;
     private JLabel label;
     private JButton download;
@@ -39,14 +44,17 @@ public class DragDropFiles extends JFrame {
     private static DefaultTreeModel getDefaultTreeModel() {
         DefaultMutableTreeNode root = new DefaultMutableTreeNode("All My Buckets");
         DefaultMutableTreeNode parent;
-        DefaultMutableTreeNode nparent;
-
         bucketName = "s3-bucket1-11223344";
-        fileObjKeyName = "MyObjectKey";
         filePath = "/Users/ddalton/Downloads/";
 
         parent = new DefaultMutableTreeNode(bucketName);
         root.add(parent);
+
+        System.out.println("Listing objects");
+        ObjectListing objectListing = s3.listObjects(new ListObjectsRequest().withBucketName(bucketName));
+        for (S3ObjectSummary objectSummary : objectListing.getObjectSummaries()) {
+            parent.add(new DefaultMutableTreeNode(objectSummary.getKey()));
+        }
 
         parent = new DefaultMutableTreeNode("TEMP BUCKET");
         root.add(parent);
@@ -56,6 +64,23 @@ public class DragDropFiles extends JFrame {
 
     public DragDropFiles() {
         super("Drag and Drop File Transfers in Cloud");
+        AWSCredentials credentials = null;
+        try {
+            credentials = new ProfileCredentialsProvider("default").getCredentials();
+        } catch (Exception e) {
+            throw new AmazonClientException(e);
+        }
+        try {
+            s3 = AmazonS3ClientBuilder.standard()
+                    .withCredentials(new AWSStaticCredentialsProvider(credentials))
+                    .withRegion("us-west-2")
+                    .build();
+
+        } catch (AmazonServiceException e) {
+            e.printStackTrace();
+        } catch (SdkClientException e) {
+            e.printStackTrace();
+        }
 
         treeModel = getDefaultTreeModel();
 
@@ -119,6 +144,7 @@ public class DragDropFiles extends JFrame {
                 if (!canImport(info)) {
                     return false;
                 }
+
                 // fetch the drop location
                 JTree.DropLocation dl = (JTree.DropLocation) info.getDropLocation();
 
@@ -137,6 +163,10 @@ public class DragDropFiles extends JFrame {
                         uploadName = f.getName();
                         String copyName = "./copy-" + f.getName();
                         File destFile = new File(copyName);
+                        // Upload a file as a new object with ContentType and title specified.
+                        PutObjectRequest request = new PutObjectRequest(bucketName, uploadName,
+                                new File(filePath + uploadName));
+                        s3.putObject(request);
                         copyFile(f, destFile);
                         break;// We process only one dropped file.
                     }
@@ -150,43 +180,6 @@ public class DragDropFiles extends JFrame {
                 // treat it as inserting at the end of that path's list of children
                 if (childIndex == -1) {
                     childIndex = tree.getModel().getChildCount(path.getLastPathComponent());
-                }
-
-                // TODO - upload the file to the cloud and make sure it works
-                /*
-                 * The ProfileCredentialsProvider will return your [default]
-                 * credential profile by reading from the credentials file located at
-                 * (/Users/ddalton/.aws/credentials).
-                 */
-                AWSCredentials credentials = null;
-                try {
-                    credentials = new ProfileCredentialsProvider("default").getCredentials();
-                } catch (Exception e) {
-                    throw new AmazonClientException(
-                            "Cannot load the credentials from the credential profiles file. " +
-                                    "Please make sure that your credentials file is at the correct " +
-                                    "location (/Users/ddalton/.aws/credentials), and is in valid format.",
-                            e);
-                }
-                try {
-                    // This code expects that you have AWS credentials set up per:
-                    // https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/setup-credentials.html
-                    AmazonS3 s3 = AmazonS3ClientBuilder.standard()
-                            .withCredentials(new AWSStaticCredentialsProvider(credentials))
-                            .withRegion("us-west-2")
-                            .build();
-
-                    // Upload a file as a new object with ContentType and title specified.
-                    PutObjectRequest request = new PutObjectRequest(bucketName, fileObjKeyName + "/", new File(filePath + uploadName));
-                    s3.putObject(request);
-                } catch (AmazonServiceException e) {
-                    // The call was transmitted successfully, but Amazon S3 couldn't process
-                    // it, so it returned an error response.
-                    e.printStackTrace();
-                } catch (SdkClientException e) {
-                    // Amazon S3 couldn't be contacted for a response, or the client
-                    // couldn't parse the response from Amazon S3.
-                    e.printStackTrace();
                 }
 
                 // create a new node to represent the data and insert it into the model
@@ -221,6 +214,7 @@ public class DragDropFiles extends JFrame {
         getContentPane().add(new JScrollPane(tree), BorderLayout.CENTER);
         download = new JButton("Download");
         download.addActionListener(new ActionListener() {
+
             public void actionPerformed(ActionEvent e) {
                 // You have to program here in this method in response to downloading a file
                 // from the cloud,
@@ -230,6 +224,10 @@ public class DragDropFiles extends JFrame {
                 if (downloadPath != null) {
                     JOptionPane.showMessageDialog(null, "You like to downloand a file from cloud from buckets:" +
                             downloadPath.toString());
+                    System.out.println("Downloading an object" + downloadPath.getPathComponent(2).toString());
+                    s3.getObject(new GetObjectRequest(bucketName, downloadPath.getPathComponent(2).toString()),
+                            new File(filePath + counter + " " + downloadPath.getPathComponent(2).toString()));
+                    counter++;
                 }
             }
         });
